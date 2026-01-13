@@ -49,18 +49,21 @@
     const transcript_div = document.getElementById("transcript");
     const translation_div = document.getElementById("translation");
 
+    const transcript_row = transcript_div.parentElement;
+    const translation_row = translation_div.parentElement;
+
     const ws_url = `ws://${location.host}/ws`;
     const ws = new WebSocket(ws_url);
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      transcript_div.textContent = data.transcript || "";
-      translation_div.textContent = data.translation || "";
-      if (data.partial) {
-        translation_div.style.opacity = "0.85";
-      } else {
-        translation_div.style.opacity = "1.0";
-      }
+        const data = JSON.parse(event.data);
+
+        const mode = data.mode || "both";
+        transcript_row.style.display = (mode === "translate") ? "none" : "block";
+        translation_row.style.display = (mode === "transcribe") ? "none" : "block";
+
+        transcript_div.textContent = data.transcript || "";
+        translation_div.textContent = data.translation || "";
     };
   </script>
 </body>

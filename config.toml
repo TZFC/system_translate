@@ -1,0 +1,37 @@
+[server]
+host = "127.0.0.1"
+port = 8765
+
+[audio]
+frame_ms = 20
+vad_aggressiveness = 2
+min_speech_ms = 250
+end_silence_ms = 550
+max_segment_s = 12.0
+partial_interval_s = 0.9
+
+[whisper]
+model = "small"
+device = "cuda"
+compute_type = "int8_float16"
+beam_size = 1
+temperature = 0.0
+condition_on_previous_text = true
+
+# Modes:
+# "transcribe" -> only transcribe
+# "translate"  -> only translate (to English per Whisper behavior)
+# "both"       -> do both
+mode = "both"
+
+# Language hints (optional but recommended for speed/accuracy)
+# source_language: language of incoming speech, e.g. "en", "zh", "ja". Leave "" for auto.
+source_language = ""
+
+# Target language note:
+# Whisper's built-in "translate" task translates to English only.
+# We'll show target_language in UI but it must currently be "en".
+target_language = "en"
+
+[display]
+max_lines = 2
