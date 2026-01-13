@@ -20,50 +20,63 @@
       line-height: 1.25;
       white-space: pre-wrap;
     }
-    .row {
-      margin-bottom: 14px;
-    }
+    .row { margin-bottom: 14px; }
     .label {
       font-size: 14px;
       opacity: 0.8;
       margin-bottom: 6px;
+      letter-spacing: 0.08em;
     }
-    .dim {
-      opacity: 0.75;
-    }
+    .dim { opacity: 0.75; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="row">
-      <div class="label">TRANSCRIPT</div>
+    <div class="row" id="row_transcript">
+      <div class="label">TRANSCRIBE</div>
       <div id="transcript" class="dim"></div>
     </div>
-    <div class="row">
-      <div class="label">TRANSLATION</div>
+
+    <div class="row" id="row_translation">
+      <div class="label">ENGLISH TRANSLATE</div>
       <div id="translation"></div>
+    </div>
+
+    <div class="row" id="row_ai_translation">
+      <div class="label">AI TRANSLATE</div>
+      <div id="ai_translation"></div>
     </div>
   </div>
 
   <script>
+    const row_transcript = document.getElementById("row_transcript");
+    const row_translation = document.getElementById("row_translation");
+    const row_ai_translation = document.getElementById("row_ai_translation");
+
     const transcript_div = document.getElementById("transcript");
     const translation_div = document.getElementById("translation");
-
-    const transcript_row = transcript_div.parentElement;
-    const translation_row = translation_div.parentElement;
+    const ai_translation_div = document.getElementById("ai_translation");
 
     const ws_url = `ws://${location.host}/ws`;
     const ws = new WebSocket(ws_url);
 
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+      const data = JSON.parse(event.data);
 
-        const mode = data.mode || "both";
-        transcript_row.style.display = (mode === "translate") ? "none" : "block";
-        translation_row.style.display = (mode === "transcribe") ? "none" : "block";
+      const features = data.features || {};
+      row_transcript.style.display = features.transcribe ? "block" : "none";
+      row_translation.style.display = features.english_translate ? "block" : "none";
+      row_ai_translation.style.display = features.ai_translate ? "block" : "none";
 
-        transcript_div.textContent = data.transcript || "";
-        translation_div.textContent = data.translation || "";
+      transcript_div.textContent = data.transcript || "";
+      translation_div.textContent = data.translation || "";
+      ai_translation_div.textContent = data.ai_translation || "";
+
+      if (data.partial) {
+        ai_translation_div.style.opacity = "0.85";
+      } else {
+        ai_translation_div.style.opacity = "1.0";
+      }
     };
   </script>
 </body>

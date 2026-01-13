@@ -2,36 +2,60 @@
 host = "127.0.0.1"
 port = 8765
 
+[display]
+max_lines = 2
+
 [audio]
-frame_ms = 20
-vad_aggressiveness = 2
 min_speech_ms = 250
 end_silence_ms = 550
+vad_aggressiveness = 2
+frame_ms = 20
 max_segment_s = 12.0
 partial_interval_s = 0.9
+
+[features]
+transcribe = true
+english_translate = true
+ai_translate = true
 
 [whisper]
 model = "small"
 device = "cuda"
 compute_type = "int8_float16"
+
 beam_size = 1
 temperature = 0.0
-condition_on_previous_text = true
+condition_on_previous_text = false
 
-# Modes:
-# "transcribe" -> only transcribe
-# "translate"  -> only translate (to English per Whisper behavior)
-# "both"       -> do both
-mode = "both"
+no_speech_threshold = 0.6
+log_prob_threshold = -1.0
+compression_ratio_threshold = 2.4
+repetition_penalty = 1.1
 
-# Language hints (optional but recommended for speed/accuracy)
-# source_language: language of incoming speech, e.g. "en", "zh", "ja". Leave "" for auto.
-source_language = ""
+# Language hint for Whisper transcribe ("" = auto)
+source_language = "en"
 
-# Target language note:
-# Whisper's built-in "translate" task translates to English only.
-# We'll show target_language in UI but it must currently be "en".
+# Whisper built-in translate outputs English only; keep "en" if english_translate=true
 target_language = "en"
 
-[display]
-max_lines = 2
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5:3b-instruct"
+system_prompt = """
+You are a professional subtitle translator.
+Translate the latest English sentence into Simplified Chinese.
+Keep it natural, concise, and suitable for live captions.
+Maintain consistent terminology with the provided context.
+Output Chinese only. No explanations.
+"""
+
+# Provide context to improve consistency
+context_lines = 6
+
+[ollama.options]
+temperature = 0.2
+top_p = 0.9
+top_k = 40
+repeat_penalty = 1.1
+num_ctx = 4096
+num_predict = 256
