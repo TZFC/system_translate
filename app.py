@@ -5,10 +5,12 @@ import os
 import time
 from collections import deque
 from typing import Deque, List, Optional, Set, Tuple
+from contextlib import asynccontextmanager
 
 import numpy as np
 import soxr
-import sounddevice as sd
+import threading
+import pyaudiowpatch as pyaudio
 import webrtcvad
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -99,32 +101,83 @@ class LiveOverlayServer:
         return int(default_output)
 
     def start_audio_capture_thread(self) -> None:
-        output_device = self.find_default_output_device()
-        self.loopback_device_index = output_device
+        audio_interface = pyaudio.PyAudio()
 
-        device_info = sd.query_devices(output_device)
-        default_samplerate = int(device_info["default_samplerate"])
+        wasapi_host_info = audio_interface.get_host_api_info_by_type(pyaudio.paWASAPI)
+        wasapi_host_index = int(wasapi_host_info["index"])
+        default_output_device_index = int(wasapi_host_info["defaultOutputDevice"])
 
-        wasapi_settings = sd.WasapiSettings(loopback=True)
+        default_output_info = audio_interface.get_device_info_by_index(default_output_device_index)
+        output_name = str(default_output_info["name"])
+        output_sample_rate = int(float(default_output_info["defaultSampleRate"]))
 
-        def audio_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
-            audio = float32_mono(indata.copy())
-            if default_samplerate != self.sample_rate_model:
-                audio = soxr.resample(audio, default_samplerate, self.sample_rate_model).astype(np.float32)
-            try:
-                self.audio_queue.put_nowait(audio)
-            except asyncio.QueueFull:
-                pass
+        loopback_device_index: Optional[int] = None
 
-        sd.InputStream(
-            samplerate=default_samplerate,
-            channels=2,
-            dtype="float32",
-            device=output_device,
-            extra_settings=wasapi_settings,
-            blocksize=0,
-            callback=audio_callback,
-        ).start()
+        for device_index in range(audio_interface.get_device_count()):
+            dev = audio_interface.get_device_info_by_index(device_index)
+            if int(dev.get("hostApi")) != wasapi_host_index:
+                continue
+            name = str(dev.get("name", ""))
+            if "loopback" not in name.lower():
+                continue
+            if output_name.lower() in name.lower():
+                loopback_device_index = int(device_index)
+                break
+
+        if loopback_device_index is None:
+            for device_index in range(audio_interface.get_device_count()):
+                dev = audio_interface.get_device_info_by_index(device_index)
+                if int(dev.get("hostApi")) != wasapi_host_index:
+                    continue
+                name = str(dev.get("name", ""))
+                if "loopback" in name.lower():
+                    loopback_device_index = int(device_index)
+                    break
+
+        if loopback_device_index is None:
+            raise RuntimeError("No WASAPI loopback device found via PyAudio.")
+
+        loopback_info = audio_interface.get_device_info_by_index(loopback_device_index)
+
+        channels = int(loopback_info["maxInputChannels"])
+        if channels <= 0:
+            channels = 2
+
+        print(f"[audio] default output: {default_output_device_index} | {output_name} | {output_sample_rate} Hz")
+        print(f"[audio] loopback input: {loopback_device_index} | {loopback_info['name']} | channels={channels}")
+
+        frames_per_buffer = int(output_sample_rate * (self.frame_ms / 1000.0))
+
+        stream = audio_interface.open(
+            format=pyaudio.paInt16,
+            channels=channels,
+            rate=output_sample_rate,
+            input=True,
+            input_device_index=loopback_device_index,
+            frames_per_buffer=frames_per_buffer,
+        )
+
+        def capture_loop() -> None:
+            while True:
+                data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                audio_int16 = np.frombuffer(data, dtype=np.int16)
+
+                if channels > 1:
+                    audio_int16 = audio_int16.reshape(-1, channels)
+                    audio_float32 = (audio_int16.astype(np.float32) / 32768.0).mean(axis=1)
+                else:
+                    audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+                if output_sample_rate != self.sample_rate_model:
+                    audio_float32 = soxr.resample(audio_float32, output_sample_rate, self.sample_rate_model).astype(np.float32)
+
+                try:
+                    self.audio_queue.put_nowait(audio_float32)
+                except asyncio.QueueFull:
+                    pass
+
+        threading.Thread(target=capture_loop, daemon=True).start()
+
 
     def vad_has_voice(self, audio_float32_16k: np.ndarray) -> bool:
         audio_int16 = clamp_int16(audio_float32_16k)
@@ -275,7 +328,18 @@ class LiveOverlayServer:
 
 
 def build_app(server: LiveOverlayServer) -> FastAPI:
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        server.start_audio_capture_thread()
+        broadcast_task = asyncio.create_task(server.broadcast_loop())
+        processing_task = asyncio.create_task(server.processing_loop())
+        try:
+            yield
+        finally:
+            broadcast_task.cancel()
+            processing_task.cancel()
+
+    app = FastAPI(lifespan=lifespan)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -294,12 +358,6 @@ def build_app(server: LiveOverlayServer) -> FastAPI:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             server.clients.discard(websocket)
-
-    @app.on_event("startup")
-    async def startup_event() -> None:
-        server.start_audio_capture_thread()
-        asyncio.create_task(server.broadcast_loop())
-        asyncio.create_task(server.processing_loop())
 
     return app
 
